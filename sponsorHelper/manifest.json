@@ -1,1 +1,1 @@
-{"name":"Sponsor Helper","description":"Validates GitHub Sponsor receipts from message attachments.","authors":[{"name":"Vendicated","id":"343383572805058560"}],"main":"index.js","vendetta":{"icon":"ic_badge_24px"},"hash":"8ad66751ab61cef346c2a9a2cacb0d6a92f6fa71b051d509819e18a38cb41a43"}
+{"name":"Sponsor Helper","description":"Validates GitHub Sponsor receipts from message attachments.","authors":[{"name":"Vendicated","id":"343383572805058560"}],"main":"index.js","vendetta":{"icon":"ic_badge_24px"},"hash":"d1a05e505244040e8d7d1f4bab36e3b2f14707200bde59ad79f62f42f6efc900"}
