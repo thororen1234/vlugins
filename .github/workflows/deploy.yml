@@ -1,0 +1,49 @@
+name: Build and deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    name: Deploy Plugins
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/setup@v3
+        with:
+          runtime: node@24
+          working-directory: kettu
+          cache: true
+          install: false
+
+      - name: Install deps
+        working-directory: kettu
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check plugins
+        working-directory: kettu
+        run: pnpm typecheck
+
+      - name: Build plugins
+        working-directory: kettu
+        run: pnpm build
+
+      - name: Stage GitHub Pages site
+        run: |
+          mkdir -p publish/kettu
+          cp -R kettu/dist/. publish/
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./publish
+          enable_jekyll: false

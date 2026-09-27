@@ -10,10 +10,11 @@ import { spawn } from "child_process";
 import { IpcMainInvokeEvent } from "electron";
 import { text } from "stream/consumers";
 
-import { checkGithubUser } from "./database";
-import { findSponsorData } from "./parser";
+import type { DbConfig } from "./libsql";
+import { importSponsorsCsv } from "./parser";
+import { type Context, verifyReceipt } from "./receipt";
 
-export type Context = Record<"userId" | "channelId" | "messageId", string>;
+export type { Context };
 
 function spawnWithInput(command: string, args: string[], input: Buffer) {
     const proc = spawn(command, args);
@@ -26,7 +27,7 @@ function spawnWithInput(command: string, args: string[], input: Buffer) {
 const pdfInfo = (pdfData: Buffer) => spawnWithInput("pdfinfo", ["-"], pdfData);
 const pdfText = (pdfData: Buffer) => spawnWithInput("pdftotext", ["-layout", "-", "-"], pdfData);
 
-export async function checkReceipt(_event: IpcMainInvokeEvent, receiptFileURL: string, ctx: Context) {
+export async function checkReceipt(_event: IpcMainInvokeEvent, receiptFileURL: string, ctx: Context, dbConfig: DbConfig, githubToken: string) {
     const url = new URL(receiptFileURL);
     if (url.host !== "cdn.discordapp.com" || !url.pathname.startsWith("/attachments/")) {
         throw new Error("Invalid receipt file URL");
@@ -39,26 +40,11 @@ export async function checkReceipt(_event: IpcMainInvokeEvent, receiptFileURL: s
         pdfText(pdfData)
     ]);
 
-    const createdByPrawn = /Creator:\s*Prawn/.test(info);
-    // text is in format 2026-04-05 04:00PM PDT. Extract the date part and parse it into a Date object
-    const dateText = text.match(/Date\s*(\d{4}-\d{2}-\d{2})/i)?.[1];
-    const date = dateText && new Date(dateText);
+    return verifyReceipt(info, text, ctx, dbConfig, githubToken);
+}
 
-    const githubUsername = text.match(/Account billed\s+([A-Z0-9-]+)/i)?.[1];
-    const transactionId = text.match(/Transaction ID\s+(ch_\S+)/i)?.[1];
-
-    if (!date || !createdByPrawn || !githubUsername || !transactionId) {
-        throw new Error("Invalid receipt file");
-    }
-
-    const data = await findSponsorData(transactionId);
-    if (!data) {
-        throw new Error("No sponsorship data found for this receipt");
-    }
-
-    const ids = await checkGithubUser(data.username, transactionId, ctx);
-
-    return { createdByPrawn, date, githubUsername, transactionId, data, ids };
+export function importCsv(_event: IpcMainInvokeEvent, csv: string, dbConfig: DbConfig) {
+    return importSponsorsCsv(csv, dbConfig);
 }
 
 CspPolicies["avatars.githubusercontent.com"] = ImageSrc;

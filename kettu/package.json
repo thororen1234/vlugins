@@ -1,0 +1,18 @@
+{
+    "name": "vlugins-kettu",
+    "private": true,
+    "type": "module",
+    "packageManager": "pnpm@12.6.0",
+    "scripts": {
+        "build": "node build.mjs",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "fflate": "^0.8.3"
+    },
+    "devDependencies": {
+        "@swc/core": "^1.16.2",
+        "esbuild": "^0.28.2",
+        "typescript": "^6.0.3"
+    }
+}

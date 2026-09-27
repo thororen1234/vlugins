@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noImplicitAny": false
+  },
+  "include": [
+    "sponsorHelper/**/*.ts",
+    "sponsorHelper/**/*.tsx",
+    "vendetta.d.ts",
+    "../sponsorHelper/native/countries.ts",
+    "../sponsorHelper/native/csvjs.ts"
+  ]
+}

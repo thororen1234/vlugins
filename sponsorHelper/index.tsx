@@ -6,14 +6,17 @@
 
 import "./style.css";
 
+import { definePluginSettings } from "@api/Settings";
 import { BaseText } from "@components/BaseText";
+import { Button } from "@components/Button";
 import { Card } from "@components/Card";
 import { Flex } from "@components/Flex";
 import { Link } from "@components/Link";
 import { Margins } from "@components/margins";
 import { Paragraph } from "@components/Paragraph";
 import { Devs } from "@utils/constants";
-import definePlugin, { PluginNative } from "@utils/types";
+import definePlugin, { OptionType, PluginNative } from "@utils/types";
+import { chooseFile } from "@utils/web";
 import { Message, MessageAttachment } from "@vencord/discord-types";
 import { ChannelStore, Menu, Modal, openModalLazy, Parser, React, showToast, Toasts } from "@webpack/common";
 
@@ -22,6 +25,64 @@ import type { Context } from "./native";
 const Native = VencordNative.pluginHelpers.SponsorHelper as PluginNative<typeof import("./native")>;
 
 type Receipt = Pick<MessageAttachment, "id" | "filename" | "url">;
+
+const settings = definePluginSettings({
+    dbUrl: {
+        type: OptionType.STRING,
+        description: "libSQL database URL",
+        default: ""
+    },
+    dbUsername: {
+        type: OptionType.STRING,
+        description: "Database username",
+        default: ""
+    },
+    dbPassword: {
+        type: OptionType.STRING,
+        description: "Database password",
+        default: ""
+    },
+    githubToken: {
+        type: OptionType.STRING,
+        description: "GitHub token used to look up sponsor accounts",
+        default: ""
+    },
+    importCsv: {
+        type: OptionType.COMPONENT,
+        component: ImportCsvButton
+    }
+});
+
+const getDbConfig = () => ({
+    url: settings.store.dbUrl,
+    username: settings.store.dbUsername,
+    password: settings.store.dbPassword
+});
+
+function ImportCsvButton() {
+    const [importing, setImporting] = React.useState(false);
+
+    async function importCsv() {
+        const file = await chooseFile(".csv,text/csv");
+        if (!file) return;
+
+        setImporting(true);
+        try {
+            const count = await Native.importCsv(await file.text(), getDbConfig());
+            showToast(`Imported ${count} transactions`, Toasts.Type.SUCCESS);
+        } catch (e) {
+            showToast(String(e), Toasts.Type.FAILURE);
+        } finally {
+            setImporting(false);
+        }
+    }
+
+    return (
+        <Button onClick={importCsv} disabled={importing}>
+            {importing ? "Importing..." : "Import Sponsors CSV"}
+        </Button>
+    );
+}
 
 const getMessageLink = ({ channelId, messageId }) => `https://discord.com/channels/0/${channelId}/${messageId}`;
 
@@ -38,9 +99,10 @@ function getContentPdfs(content: string): Receipt[] {
     });
 }
 
-function checkReceipt({ userId, messageId, channelId }: Context, pdf: Receipt) {
+function checkReceipt(ctx: Context, pdf: Receipt) {
+    const { userId, messageId } = ctx;
     openModalLazy(async () => {
-        const result = await Native.checkReceipt(pdf.url, { userId, messageId, channelId })
+        const result = await Native.checkReceipt(pdf.url, ctx, getDbConfig(), settings.store.githubToken)
             .catch(e => {
                 showToast(String(e), Toasts.Type.FAILURE);
             });
@@ -54,7 +116,7 @@ function checkReceipt({ userId, messageId, channelId }: Context, pdf: Receipt) {
 
             ids.messageId !== messageId && (
                 <Card variant="warning">
-                    Receipt already checked in another message: {Parser.parse(getMessageLink(ids))}
+                    Receipt already checked {Parser.parse(`<t:${ids.checkedAt}:R>`)}{ids.channelName && ` in #${ids.channelName}`}: {Parser.parse(getMessageLink(ids))}
                 </Card>
             ),
 
@@ -110,15 +172,17 @@ export default definePlugin({
     name: "SponsorHelper",
     authors: [Devs.Ven],
     description: "You don't need this",
+    settings,
 
     contextMenus: {
         message(children, { message: msg }: { message: Message; }) {
             const channel = ChannelStore.getChannel(msg.channel_id);
-            if (!channel.isPrivate()) return;
+            if (!channel) return;
 
             const ctx: Context = {
                 userId: msg.author.id,
                 channelId: msg.channel_id,
+                channelName: channel.name,
                 messageId: msg.id
             };
 

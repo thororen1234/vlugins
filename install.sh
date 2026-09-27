@@ -23,6 +23,7 @@ fi
 
 for plugin in *; do
 	[[ -d "$plugin" ]] || continue
+	[[ $plugin == kettu ]] && continue
 
 	if [[ $action == uninstall || $action == update ]]; then
 		# target shouldn't ever be blank here but still use :? to avoid STEAMROOTing
