@@ -1,5 +1,5 @@
 import { storage } from "@vendetta/plugin";
-import { instead } from "@vendetta/patcher";
+import { after, before } from "@vendetta/patcher";
 import { findByProps, findByStoreName } from "@vendetta/metro";
 import { React, ReactNative as RN } from "@vendetta/metro/common";
 import { showConfirmationAlert, showInputAlert } from "@vendetta/ui/alerts";
@@ -27,6 +27,24 @@ const getDbConfig = (): DbConfig => ({
 
 function toast(message: string, success = false) {
     showToast(message, getAssetIDByName(success ? "Check" : "Small"));
+}
+
+function findInReactTree(tree: any, predicate: (value: any) => boolean, seen = new Set<any>()): any {
+    if (tree == null || (typeof tree !== "object" && typeof tree !== "function") || seen.has(tree)) return;
+    if (predicate(tree)) return tree;
+
+    seen.add(tree);
+    if (Array.isArray(tree)) {
+        for (const child of tree) {
+            const found = findInReactTree(child, predicate, seen);
+            if (found) return found;
+        }
+    } else {
+        for (const value of Object.values(tree)) {
+            const found = findInReactTree(value, predicate, seen);
+            if (found) return found;
+        }
+    }
 }
 
 function parseDiscordMarkup(text: string) {
@@ -200,68 +218,108 @@ function Settings() {
             />
             <Forms.FormRow
                 label="Check a receipt"
-                subLabel="Quad-tap a message with a PDF receipt to check it."
+                subLabel="Long-press a message with a PDF receipt, then choose Check sponsor receipt."
             />
         </Forms.FormSection>
     </RN.ScrollView>;
 }
 
-const QUAD_TAP_WINDOW = 1500;
-
-let unpatchDoubleTap: (() => void) | undefined;
+let unpatchActionSheet: (() => void) | undefined;
 let retryTimer: ReturnType<typeof setInterval> | undefined;
-let pendingTap: { messageId: string; message: any; channel: any; at: number; } | undefined;
 
-function enableDoubleTap() {
-    const doubleTapReaction = findByProps("DoubleTapReactionEmoji")?.DoubleTapReactionEmoji;
-    if (!doubleTapReaction?.updateSetting) return;
-
-    const setting = doubleTapReaction.getSetting?.();
-    doubleTapReaction.updateSetting({
-        disableDoubleTap: false,
-        emojiId: setting?.emojiId ?? null,
-        emojiName: setting?.emojiName ?? null,
-        animated: setting?.animated ?? null
-    });
-}
-
-function onDoubleTap(message: any, channel: any) {
-    const receipt = getReceipts(message)[0];
-    if (!receipt) return false;
-
-    const now = Date.now();
-    const previousTap = pendingTap;
-    if (previousTap && previousTap.messageId === message.id && now - previousTap.at <= QUAD_TAP_WINDOW) {
-        pendingTap = undefined;
+function injectReceiptRow(sheet: any, message: any, receipt: Receipt, actionSheet: any) {
+    const actionSheetContainer = findInReactTree(
+        sheet,
+        value => Array.isArray(value) && value[0]?.type?.name === "ActionSheetRowGroup"
+    );
+    const children = actionSheetContainer?.[1]?.props?.children;
+    const icon = getAssetIDByName("ic_badge_24px");
+    const onPress = () => {
+        actionSheet.hideActionSheet();
         toast("Checking sponsor receipt...", true);
         void checkReceipt(receipt, message);
-        return true;
+    };
+
+    if (Array.isArray(children) && children.length) {
+        if (children.some((child: any) => child?.key === "sponsor-helper-check-receipt")) return;
+
+        const template = children.find((child: any) => child?.type);
+        if (!template) return;
+
+        const ActionSheetRow = template.type;
+        const templateIcon = template.props?.icon;
+        const checkButton = (
+            <ActionSheetRow
+                key="sponsor-helper-check-receipt"
+                label="Check sponsor receipt"
+                icon={templateIcon ? {
+                    $$typeof: templateIcon.$$typeof,
+                    type: templateIcon.type,
+                    key: null,
+                    ref: null,
+                    props: {
+                        IconComponent: () => <RN.Image resizeMode="contain" style={{ width: 24, height: 24 }} source={icon} />
+                    }
+                } : undefined}
+                onPress={onPress}
+            />
+        );
+
+        const copyIndex = children.findIndex((child: any) =>
+            child?.props?.label?.toUpperCase?.().includes("COPY")
+            || child?.props?.message?.toUpperCase?.().includes("COPY")
+        );
+        children.splice(copyIndex === -1 ? children.length : copyIndex, 0, checkButton);
+        return;
     }
 
-    pendingTap = { messageId: message.id, message, channel, at: now };
-    return true;
+    const buttons = findInReactTree(sheet, value => value?.[0]?.type?.name === "ButtonRow");
+    if (!Array.isArray(buttons) || buttons.some((child: any) => child?.key === "sponsor-helper-check-receipt")) return;
+
+    const { FormRow, FormIcon } = Forms;
+    buttons.push(
+        <FormRow
+            key="sponsor-helper-check-receipt"
+            label="Check sponsor receipt"
+            leading={<FormIcon style={{ opacity: 1 }} source={icon} />}
+            onPress={onPress}
+        />
+    );
 }
 
-function tryPatchDoubleTap() {
-    if (unpatchDoubleTap) return true;
+function tryPatchActionSheet() {
+    if (unpatchActionSheet) return true;
 
-    enableDoubleTap();
-    const reactions = findByProps("handleAddDefaultDoubleTapReaction");
-    if (typeof reactions?.handleAddDefaultDoubleTapReaction !== "function") return false;
+    const actionSheet = findByProps("openLazy", "hideActionSheet");
+    if (typeof actionSheet?.openLazy !== "function" || typeof actionSheet?.hideActionSheet !== "function") return false;
 
-    unpatchDoubleTap = instead("handleAddDefaultDoubleTapReaction", reactions, (args: any[], original: Function) => {
-        if (onDoubleTap(args[0], args[1])) return;
-        return original(...args);
+    unpatchActionSheet = before("openLazy", actionSheet, ([component, key, options]: any[]) => {
+        const message = options?.message;
+        const receipt = message && getReceipts(message)[0];
+        if (key !== "MessageLongPressActionSheet" || !receipt) return;
+
+        void Promise.resolve(component).then((instance: any) => {
+            if (typeof instance?.default !== "function") return;
+
+            const unpatch = after("default", instance, (_: any, sheet: any) => {
+                React.useEffect(() => () => unpatch(), []);
+                try {
+                    injectReceiptRow(sheet, message, receipt, actionSheet);
+                } catch (error) {
+                    console.error("[Sponsor Helper] Failed to add receipt action:", error);
+                }
+            });
+        }).catch(() => { });
     });
     return true;
 }
 
 function start() {
-    if (unpatchDoubleTap || retryTimer) return;
+    if (unpatchActionSheet || retryTimer) return;
 
-    if (tryPatchDoubleTap()) return;
+    if (tryPatchActionSheet()) return;
     retryTimer = setInterval(() => {
-        if (!tryPatchDoubleTap()) return;
+        if (!tryPatchActionSheet()) return;
         clearInterval(retryTimer);
         retryTimer = undefined;
     }, 1000);
@@ -270,9 +328,8 @@ function start() {
 function stop() {
     if (retryTimer) clearInterval(retryTimer);
     retryTimer = undefined;
-    unpatchDoubleTap?.();
-    unpatchDoubleTap = undefined;
-    pendingTap = undefined;
+    unpatchActionSheet?.();
+    unpatchActionSheet = undefined;
 }
 
 export default {
