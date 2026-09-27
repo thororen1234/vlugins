@@ -13,6 +13,8 @@ import { importSponsorsCsv } from "../../sponsorHelper/native/parser";
 import { type Context, verifyReceipt } from "../../sponsorHelper/native/receipt";
 import { extractPdf } from "./pdf";
 
+const findAssetId = getAssetIDByName;
+
 type Receipt = {
     filename: string;
     url: string;
@@ -75,8 +77,14 @@ function getContentPdfs(content: string): Receipt[] {
     });
 }
 
+function collectionValues(value: any): any[] {
+    if (Array.isArray(value)) return value;
+    if (typeof value?.values === "function") return Array.from(value.values());
+    return Object.values(value ?? {});
+}
+
 function getMessageReceipts(message: any): Receipt[] {
-    const attachments = Object.values(message.attachments ?? {})
+    const attachments = collectionValues(message?.attachments)
         .filter((attachment: any) => /\.pdf(?:$|[?#])/i.test(attachment.filename ?? attachment.url ?? ""))
         .map((attachment: any) => ({
             url: attachment.url as string,
@@ -91,9 +99,17 @@ function getMessageReceipts(message: any): Receipt[] {
 }
 
 function getReceipts(message: any): Receipt[] {
-    const snapshotMessages = (message.message_snapshots ?? [])
-        .map((snapshot: any) => snapshot.message)
-        .filter(Boolean);
+    const snapshots = [
+        ...collectionValues(message?.message_snapshots),
+        ...collectionValues(message?.messageSnapshots),
+        ...collectionValues(message?.snapshots)
+    ];
+    const snapshotMessages = snapshots.flatMap((snapshot: any) => [
+        snapshot?.message,
+        snapshot?.messageSnapshot?.message,
+        snapshot?.snapshot?.message,
+        snapshot?.attachments || snapshot?.content ? snapshot : undefined
+    ]).filter(Boolean);
 
     return [message, ...snapshotMessages]
         .flatMap(getMessageReceipts)
@@ -233,7 +249,7 @@ function injectReceiptRow(sheet: any, message: any, receipt: Receipt, actionShee
         value => Array.isArray(value) && value[0]?.type?.name === "ActionSheetRowGroup"
     );
     const children = actionSheetContainer?.[1]?.props?.children;
-    const icon = getAssetIDByName("ic_badge_24px");
+    const icon = findAssetId("ChatXIcon");
     const onPress = () => {
         actionSheet.hideActionSheet();
         toast("Checking sponsor receipt...", true);
